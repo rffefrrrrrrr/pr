@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -55,6 +54,20 @@ kick_tasks: Dict[str, asyncio.Task] = {}
 # MongoDB Client and Database
 client: MongoClient = None
 db = None
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(bytes("<html><head><title>Health Check</title></head>", "utf-8"))
+        self.wfile.write(bytes("<body><p>Bot is running.</p></body></html>", "utf-8"))
+
+def run_http_server(port):
+    server_address = ("0.0.0.0", port)
+    httpd = HTTPServer(server_address, HealthCheckHandler)
+    logger.info(f"Starting HTTP server on port {port}")
+    httpd.serve_forever()
 
 def init_mongodb():
     global client, db
@@ -440,61 +453,49 @@ async def captcha_callback_handler(update: Update, context: ContextTypes.DEFAULT
             if task_key in kick_tasks:
                 kick_tasks[task_key].cancel()
                 del kick_tasks[task_key]
-            
             if chat_id in pending_users and user_id in pending_users[chat_id]:
                 del pending_users[chat_id][user_id]
 
 async def schedule_kick(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, message_id: int):
-    """جدولة طرد المستخدم بعد فترة معينة"""
+    """جدولة طرد المستخدم بعد فترة زمنية"""
     await asyncio.sleep(1800)  # 30 دقيقة
     
-    task_key = f"{chat_id}_{user_id}"
-    if task_key in kick_tasks:
-        del kick_tasks[task_key]
-
     if chat_id in pending_users and user_id in pending_users[chat_id]:
+        logger.info(f"طرد المستخدم {user_id} من {chat_id} بسبب انتهاء المهلة.")
         try:
-            await context.bot.unban_chat_member(chat_id, user_id) # Kicking is unbanning a restricted user who is currently restricted
-            user_data = pending_users[chat_id][user_id]
-            username = user_data['username']
-            await context.bot.send_message(chat_id, f"⏰ انتهت مهلة الكابتشا. تم طرد المستخدم @{username} لعدم حل الكابتشا.")
+            await context.bot.unban_chat_member(chat_id, user_id)
+            await context.bot.send_message(chat_id, f"⏰ انتهت المهلة! تم طرد المستخدم @{pending_users[chat_id][user_id]['username']}.")
             await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
             await log_captcha_event(user_id, chat_id, 'timeout')
-            del pending_users[chat_id][user_id]
         except Exception as e:
             logger.error(f"خطأ في طرد المستخدم {user_id} من {chat_id} بعد انتهاء المهلة: {e}")
+        finally:
+            del pending_users[chat_id][user_id]
+            task_key = f"{chat_id}_{user_id}"
+            if task_key in kick_tasks:
+                del kick_tasks[task_key]
 
 async def dev_commands_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """قائمة أوامر المطورين"""
-    user = update.effective_user
+    """عرض قائمة أوامر المطورين"""
     query = update.callback_query
     await query.answer()
-
-    if user.id not in DEVELOPER_IDS:
-        await query.edit_message_text("عذراً، هذه الأوامر متاحة للمطورين فقط.")
-        return
-
+    
     keyboard = [
-        [InlineKeyboardButton("📊 إحصائيات البوت", callback_data="bot_stats_show")],
+        [InlineKeyboardButton("📊 عرض الإحصائيات العامة", callback_data="bot_stats_show")],
         [InlineKeyboardButton("📢 إذاعة للمستخدمين", callback_data="broadcast_users_prompt")],
-        [InlineKeyboardButton("📢 إذاعة للمجموعات", callback_data="broadcast_chats_all_prompt")],
+        [InlineKeyboardButton("📢 إذاعة للمجموعات المفعلة", callback_data="broadcast_chats_all_prompt")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="start_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text("⚙️ أوامر المطورين:", reply_markup=reply_markup)
 
 async def admin_commands_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """قائمة أوامر المشرفين"""
-    user = update.effective_user
+    """عرض قائمة أوامر المشرفين"""
     query = update.callback_query
     await query.answer()
-
-    if not await is_activating_admin(user.id) and user.id not in DEVELOPER_IDS:
-        await query.edit_message_text("عذراً، هذه الأوامر متاحة للمشرفين الذين قاموا بتفعيل البوت في مجموعاتهم فقط.")
-        return
-
+    
     keyboard = [
-        [InlineKeyboardButton("📊 إحصائيات مجموعتي", callback_data="admin_stats_show")],
+        [InlineKeyboardButton("📊 عرض إحصائيات المجموعة", callback_data="admin_stats_show")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="start_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -666,22 +667,5 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-
-
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        self.wfile.write(bytes("<html><head><title>Health Check</title></head>", "utf-8"))
-        self.wfile.write(bytes("<body><p>Bot is running.</p></body></html>", "utf-8"))
-
-def run_http_server(port):
-    server_address = ("0.0.0.0", port)
-    httpd = HTTPServer(server_address, HealthCheckHandler)
-    logger.info(f"Starting HTTP server on port {port}")
-    httpd.serve_forever()
 
 
