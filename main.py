@@ -11,6 +11,8 @@ import logging
 import asyncio
 import random
 import fcntl
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta
 from typing import Dict, Set
 import telegram
@@ -36,6 +38,7 @@ load_dotenv()  # لتحميل المتغيرات من ملف .env
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
+PORT = int(os.getenv("PORT", 8080)) # Default to 8080 if not set
 
 # معرفات المطورين (User IDs)
 DEVELOPER_IDS = [6714288409, 6459577996]
@@ -649,6 +652,12 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
     print("🤖 بدء تشغيل بوت الحماية...")
+
+    # Start HTTP server in a separate thread
+    http_thread = threading.Thread(target=run_http_server, args=(PORT,))
+    http_thread.daemon = True
+    http_thread.start()
+
     try:
         application.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception as e:
@@ -657,4 +666,22 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(bytes("<html><head><title>Health Check</title></head>", "utf-8"))
+        self.wfile.write(bytes("<body><p>Bot is running.</p></body></html>", "utf-8"))
+
+def run_http_server(port):
+    server_address = ("0.0.0.0", port)
+    httpd = HTTPServer(server_address, HealthCheckHandler)
+    logger.info(f"Starting HTTP server on port {port}")
+    httpd.serve_forever()
+
 
